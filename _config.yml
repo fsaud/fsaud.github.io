@@ -1,0 +1,20 @@
+title: "Saud Farooqui"
+description: "Notes and experiments on C++, Linux, and low-latency systems."
+author: "Saud Farooqui"
+
+url: "https://fsaud.github.io"
+baseurl: ""
+
+theme: minima
+markdown: kramdown
+
+permalink: /:title/
+show_excerpts: true
+
+timezone: Asia/Karachi
+
+plugins:
+  - jekyll-feed
+
+header_pages:
+  - about.md

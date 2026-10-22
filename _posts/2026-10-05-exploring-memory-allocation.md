@@ -5,6 +5,12 @@ date: 2026-10-05 12:00:00 +0500
 categories: [cpp, memory]
 ---
 
+<div class="experiment-overview" aria-label="Experiment overview">
+  <div><span>Explore</span><strong>glibc's allocator</strong></div>
+  <div><span>Inspect with</span><strong>GDB + GEF</strong></div>
+  <div><span>This experiment</span><strong>Tcache disabled</strong></div>
+</div>
+
 When you call `malloc(16)`, does your program immediately ask Linux for
 16 more bytes? And when you call `free`, does that memory go straight
 back to the kernel?

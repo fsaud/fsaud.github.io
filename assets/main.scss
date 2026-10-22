@@ -1,0 +1,142 @@
+---
+---
+
+@import "minima";
+
+/* A quiet reading surface with color reserved for navigation and evidence. */
+:root {
+  --ink: #243449;
+  --muted: #5c6e7b;
+  --accent: #087e80;
+  --blue: #2459a6;
+  --line: #d6e3e5;
+}
+
+body {
+  color: var(--ink);
+  background: #f7f9f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+.site-header {
+  border-top: 5px solid var(--accent);
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.site-title, .site-title:visited { color: var(--ink); font-weight: 700; }
+.site-nav .page-link { color: var(--accent); }
+.wrapper { max-width: 960px; }
+.page-content { padding-top: 48px; }
+a, a:visited { color: var(--blue); }
+a:hover { color: var(--accent); text-decoration-thickness: 2px; }
+
+.post-header {
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent);
+  border-radius: 0 16px 16px 0;
+  background: linear-gradient(120deg, #e6f4f0, #edf3fc);
+  margin-bottom: 32px;
+}
+.post-title {
+  font-size: clamp(2rem, 4.5vw, 3rem);
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+  font-weight: 750;
+  max-width: 24ch;
+}
+.post-meta { color: var(--muted); font-size: 14px; }
+.post-content { margin-bottom: 48px; }
+.post-content h2 {
+  font-size: 27px;
+  font-weight: 700;
+  color: #07666a;
+  line-height: 1.35;
+  margin-top: 48px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--line);
+  scroll-margin-top: 24px;
+}
+.post-content h3 { color: var(--blue); font-size: 22px; font-weight: 650; margin-top: 30px; }
+.post-content p, .post-content li { overflow-wrap: anywhere; }
+.post-content li { margin-bottom: 8px; }
+.post-content li::marker { color: var(--accent); }
+.post-content strong { color: #183f52; }
+
+code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+code { color: #095e69; background: #e9f1f3; border-color: #d5e4e8; border-radius: 5px; }
+pre, .highlight {
+  background: #eef3f8;
+  border-radius: 12px;
+}
+pre { border: 1px solid #cedce8; padding: 20px; line-height: 1.65; }
+pre code { color: #263d56; border: 0; background: transparent; overflow-wrap: normal; }
+.highlight .err { background: #ffe4e4; color: #9f1638; }
+.highlight .c, .highlight .c1, .highlight .cm { color: #526578; }
+
+.post-content table {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+}
+.post-content th { background: #e1f0ed; color: #145459; border-color: var(--line); }
+.post-content td { border-color: var(--line); }
+.post-content tr:nth-child(even) { background: #f0f6f7; }
+.post-content img {
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  height: auto;
+  padding: 10px;
+  margin: 26px auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(28, 66, 76, 0.08);
+}
+.post-content blockquote {
+  border-left: 4px solid var(--accent);
+  background: #eaf4f1;
+  color: #24535b;
+  font-size: 18px;
+  font-style: normal;
+  letter-spacing: normal;
+  padding: 18px 22px;
+  border-radius: 0 10px 10px 0;
+}
+.post-content blockquote p:last-child { margin-bottom: 0; }
+
+.experiment-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 28px;
+}
+.experiment-overview div { padding: 16px; background: #fff; border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 10px; }
+.experiment-overview div:nth-child(2) { border-top-color: var(--blue); }
+.experiment-overview div:nth-child(3) { border-top-color: #a66b17; }
+.experiment-overview span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.experiment-overview strong { font-size: 16px; }
+.site-footer { background: #edf3f2; border-color: var(--line); }
+.footer-col-wrapper { color: var(--muted); }
+.post-list-heading { color: #07666a; }
+.post-link { font-weight: 650; }
+::selection { background: #bde7dd; color: #183f52; }
+
+@media screen and (max-width: 600px) {
+  body { font-size: 16px; }
+  .page-content { padding-top: 24px; }
+  .post-header { padding: 22px 18px; }
+  .post-content h2 { font-size: 24px; }
+  .experiment-overview { grid-template-columns: 1fr; gap: 8px; }
+  .experiment-overview div { padding: 12px 16px; }
+  .post-content table { display: block; max-width: 100%; overflow-x: auto; }
+  pre { padding: 14px; }
+}

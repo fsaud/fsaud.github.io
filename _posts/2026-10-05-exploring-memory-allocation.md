@@ -1,40 +1,43 @@
 ---
 layout: post
-title: "“Does every malloc call ask Linux for memory? A small experiment with glibc”"
+title: "Does every malloc call ask Linux for memory? A small experiment with glibc"
 date: 2026-10-05 12:00:00 +0500
 categories: [cpp, memory]
 ---
 
-On Linux, common C++ standard library implementations such as GNU
-libstdc++ implement the default, ordinary `::operator new` as a thin
-wrapper around `malloc()`, with additional allocation-failure handling.
-The corresponding `::operator delete` calls `free()`.
+When you call `malloc(16)`, does your program immediately ask Linux for
+16 more bytes? And when you call `free`, does that memory go straight
+back to the kernel?
 
-This is an implementation choice rather than a C++ language requirement;
-custom replacements and over-aligned allocations can take different paths.
-For this blog series, we will therefore explore what happens inside
-`malloc()` and `free()` to understand the allocator behind typical C and
-C++ allocations.
+Let's find out by watching a few allocations in GDB. We will follow
+chunks as they are allocated, freed, and reused—and see why a library
+call does not necessarily mean a system call.
 
-On Linux systems that use glibc, these calls normally use glibc's
-ptmalloc-based allocator. An alternative allocator, such as TCMalloc,
-can replace it when linked into the program or loaded through
-`LD_PRELOAD`. In this series, we will use glibc's default allocator.
+## Why start with malloc?
+
+If you write C++, you might usually reach for `new` rather than `malloc`.
+In GNU libstdc++, the default, ordinary `::operator new` calls `malloc`,
+with additional allocation-failure handling; the corresponding
+`::operator delete` calls `free`. This is an implementation choice,
+rather than a C++ language requirement. Custom replacements and
+over-aligned allocations can take different paths.
+
+On Linux systems that use glibc, `malloc` and `free` normally use glibc's
+ptmalloc-based allocator. Alternatives such as TCMalloc can replace it
+through linking or `LD_PRELOAD`. Here, we will use glibc's allocator.
 
 ## The question
 
-What happens when a C/C++ program requests a small allocation, and how can
-we determine whether that request causes a system call?
+**Can a small allocation be satisfied using memory the allocator already
+has, without requesting more from the kernel?**
 
-Many developers think of `malloc` as a system call that asks Linux for
-memory. In practice, `malloc` is a library function, and not every call
-results in a system call. The allocator can satisfy requests using memory
-it already manages.
+`malloc` is a library function. It can reuse freed chunks or split space
+it already manages, so not every call results in a system call. This
+post explores those paths with tcache caching disabled.
 
-In this series, we will explore glibc's `malloc` internals through small
-examples to demystify the underlying architecture. We will also examine
-the allocator's tunable parameters and how to adapt its behavior to the
-needs of the service we are designing.
+Across the series, we will build on these experiments to understand
+allocator internals and tunable parameters, and how their tradeoffs
+relate to the service we are designing.
 
 ## Start with the basics
 
@@ -46,8 +49,9 @@ process on x86-64:
 For a single-threaded application, glibc normally uses the **main arena**,
 which manages the region marked **heap** in this layout. This region can
 grow through `brk`/`sbrk`. Some allocations, particularly larger ones, may
-instead use separate `mmap` mappings, so every allocation does not have
-to live in that heap region.
+instead use separate `mmap` mappings, so not every allocation lives
+in that heap region. `sbrk` is a library interface that adjusts the program
+break through the underlying `brk` system call.
 
 Before tracing an allocation, let's establish a few terms.
 
@@ -75,9 +79,10 @@ uses the process heap; additional arenas can manage multiple mapped heaps.
 **Chunk:** An allocator-managed block containing metadata and space for
 application data. `malloc` returns a pointer to the data, not the chunk header.
 
-## What an arena contains
+## Where reusable memory is tracked
 
-An arena tracks allocated chunks and reusable memory through these structures:
+An arena tracks reusable space through the following structures. Tcache
+is included for context, but belongs to a thread rather than an arena:
 
 - **Top chunk:** Free space at the end of the arena's current heap. It can
   be split to satisfy allocations and extended when more memory is needed.
@@ -100,50 +105,70 @@ for the program being launched.
 
 With these terms in place, let's begin with a small program.
 
-The environment used for these experiments is:
+### Experiment environment
+
+The screenshots below come from this environment. Sizes and allocator
+paths discussed here apply to this setup; other glibc versions and
+settings can behave differently:
 
 ```yaml
 Distribution: AlmaLinux 9.6
-Kernel: 6.18.40.1
-Architecture: x86-64
+Kernel: 6.18.40.1-microsoft-standard-WSL2
+Architecture / ABI: x86-64, 64-bit executable
 glibc package: glibc-2.34-275.el9_8.x86_64
 Matching glibc source revision: glibc-2.34-275.el9_8.src.rpm (glibc 2.34 with distribution patches)
 ```
 
-## Experiment
+## The program
+
+Before running it, make a prediction: will requests of 15 and 16 bytes
+reuse the same chunk? What about 120 and 128 bytes?
+
+Save the following as `main.cpp`. The final checkpoint gives us a place
+to pause before the process exits.
 
 ```cpp
 #include <stdlib.h>
 
 int main()
 {
-
     void* p = malloc(15);
-    void *q = malloc(31);
-    void *r = malloc(120);
+    void* q = malloc(31);
+    void* r = malloc(120);
     if (!p || !q || !r) {
         return 1;
     }
 
-    // std::printf("Allocated address: %p\n", p);
     free(p);
     free(q);
     free(r);
-    p = q =r = NULL;
+    p = q = r = nullptr;
+
     p = malloc(16);
     q = malloc(32);
     r = malloc(128);
+
     volatile int checkpoint = 0; // Set a breakpoint here.
     return checkpoint;
 }
 ```
+
 We will use GEF, an extension for GDB, to debug this program and experiment
 with glibc's ptmalloc allocator. By stepping through the allocations and
 frees and inspecting chunks, bins, and the top chunk, we will explore how
 the program's requests change the allocator's internal state and when it
 reuses memory it already manages.
 
-## Disable tcache in GDB
+## Build and start GDB
+
+With GDB and GEF installed, build a debug executable and open it:
+
+```bash
+g++ -std=c++17 -O0 -g -fno-pie -no-pie main.cpp -o allocation-demo
+gdb ./allocation-demo
+```
+
+### Disable tcache before running
 
 Before running the program in GDB, set `GLIBC_TUNABLES` as shown below
 to disable tcache caching for this experiment:
@@ -168,7 +193,26 @@ allocate the per-thread `tcache_perthread_struct`, which appears as a
 not mean caching is enabled: `tcache_count=0` prevents freed chunks from
 being stored in tcache, while its bookkeeping structure can still exist.
 
-## Main arena
+### Load matching glibc debug symbols
+
+GEF can inspect allocator state more reliably with matching glibc debug
+symbols. On the AlmaLinux system used here, install them with:
+
+```bash
+sudo dnf debuginfo-install glibc-2.34-275.el9_8.x86_64
+```
+
+If the subcommand is unavailable, install `dnf-plugins-core` first. Use
+the version matching your installed glibc, then start a fresh GDB session.
+Without those symbols, GEF may fall back to the start of the `[heap]`
+mapping. In this environment, startup storage for the tunables string
+can precede the malloc chunks and confuse that fallback heap walk.
+
+At the breakpoint on `main`, the highlighted allocation line has not
+executed yet. Use `next` (or `n`) to execute it before inspecting its
+result. The same rule applies when stepping over `free`.
+
+## Inspect the main arena
 
 Use `heap arenas` in GEF to display the main arena, the allocator
 structure that tracks this heap's state, including its fastbins and
@@ -179,11 +223,12 @@ inspected separately with `heap bins`.
 
 At the early checkpoint shown here, the displayed top pointer is
 `top=0x0`, and the memory counters are `mem=0` and `mempeak=0`.
-The main arena structure exists, but it has not yet obtained memory
-for its heap. These fields will change as allocations initialize and
-grow the heap.
+The main arena structure exists, but these fields have not yet been
+initialized by allocation activity. This is the state captured here, not
+a guarantee for every program: runtime libraries can allocate before
+`main`, and other startup code may already have reserved heap space.
 
-## Empty bins
+## Establish the initial state
 
 Before our allocations, run `heap bins` to inspect the initial state.
 All displayed fastbins are empty, as shown below.
@@ -195,10 +240,10 @@ Each fastbin index corresponds to a particular chunk size: index 0 holds
 and so on. These are allocator chunk sizes, including overhead and
 alignment, not the byte counts passed to `malloc`.
 
-
 ## First allocation
 
-Step over `malloc(15)` and inspect the heap with `heap chunks`.
+Ready to test the first prediction? Step over `malloc(15)`, then run
+`heap chunks` and `p/x p`.
 The heap now contains glibc's tcache bookkeeping chunk, the application's
 allocation, and the remaining top chunk.
 
@@ -214,7 +259,7 @@ The tcache bookkeeping chunk can still appear even though caching is
 disabled. The top chunk holds the remaining space available for future
 allocations.
 
-## All Allocations
+## All allocations
 
 After stepping over the first three `malloc` calls and before freeing
 anything, run `heap chunks`. GEF displays the tcache bookkeeping chunk,
@@ -239,6 +284,25 @@ The `0x290`-byte chunk at `0x405040` is glibc's tcache bookkeeping
 allocation. The remaining top chunk is displayed at `0x4053a0` with
 size `0x21c70`. It provides space for subsequent allocations.
 
+### Why do the chunk sizes differ from the requests?
+
+For these small requests on this setup, glibc adds an effective 8-byte
+size overhead, rounds up to 16-byte alignment, and enforces a minimum
+chunk size of 32 bytes:
+
+```text
+chunk size = max(32, round_up(request + 8, 16))
+
+15 bytes  → 0x20     16 bytes  → 0x20
+31 bytes  → 0x30     32 bytes  → 0x30
+120 bytes → 0x80     128 bytes → 0x90
+```
+
+The pointer is 16 bytes after the chunk's header address, but the
+previous-size word in the following chunk can be used as payload while
+this chunk is allocated. That is why the effective size overhead here
+is 8 bytes rather than a flat 16 bytes.
+
 ### Reading GEF's chunk flags
 
 In this GEF display, green flag names indicate set bits and red names
@@ -255,6 +319,9 @@ indicate unset bits. Thus `PREV_INUSE` is set, while `IS_MMAPPED` and
   mapped heaps without setting `IS_MMAPPED` on their individual chunks.
 
 ## After freeing
+
+Will `free` return these small blocks to Linux? Let's inspect the bins
+before making another allocation.
 
 After stepping over `free(p)`, `free(q)`, and `free(r)`, run
 `heap bins fast` to inspect the freed chunks:
@@ -275,6 +342,8 @@ free space: fastbins defer consolidation. The indexes reflect chunk
 sizes, not the order in which the chunks were freed.
 
 ## Reusing a fastbin chunk
+
+Now test the prediction: does changing the requested size prevent reuse?
 
 Now step over `p = malloc(16)` and inspect `heap bins fast` and `p/x p`:
 
@@ -341,8 +410,8 @@ next reuse path for fastbin-sized requests. If no matching chunk is
 available, the allocator can use other paths, including splitting the
 top chunk, before needing more memory from the kernel.
 
-**Reuse depends on the allocator's chunk size class, not an exact match
-between requested sizes.** In this experiment, requests of 15 and 16
+**For the fastbin reuse shown here, the allocator's chunk size class
+matters, not an exact match between requested sizes.** In this experiment, requests of 15 and 16
 bytes share the `0x20`-byte chunk class, as do 31 and 32 bytes in the
 `0x30`-byte class. Requests of 120 and 128 bytes cross a class boundary:
 they require `0x80`-byte and `0x90`-byte chunks respectively.
@@ -351,9 +420,23 @@ With tcache disabled, we saw `malloc(16)` and `malloc(32)` reuse chunks
 from their matching fastbins. The 128-byte request could not use the
 freed `0x80`-byte chunk and was instead served from the top chunk.
 
+The debugger snapshots show allocator state and pointer reuse; they are
+not a system-call trace. To measure exactly which calls reach the kernel,
+we would also need to trace calls such as `brk`, `mmap`, and `munmap`.
+
 ## Next experiment
 
 Next, we will repeat the experiment with tcache enabled. We will inspect
 how freed chunks enter the per-thread cache and how later allocations
 reuse them, then compare this behavior with the fastbin paths observed
 here.
+
+## Source references
+
+For the implementation details behind this walkthrough, see glibc
+2.34's [malloc.c](https://github.com/bminor/glibc/blob/glibc-2.34/malloc/malloc.c)
+and [arena.c](https://github.com/bminor/glibc/blob/glibc-2.34/malloc/arena.c).
+These are upstream references; the distribution source RPM listed above
+includes the patches matching the installed package. For the C++ entry
+points, see libstdc++'s [operator new](https://github.com/gcc-mirror/gcc/blob/master/libstdc%2B%2B-v3/libsupc%2B%2B/new_op.cc)
+and [operator delete](https://github.com/gcc-mirror/gcc/blob/master/libstdc%2B%2B-v3/libsupc%2B%2B/del_op.cc).

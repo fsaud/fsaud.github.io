@@ -2,6 +2,7 @@
 layout: post
 title: "Does every malloc call ask Linux for memory? A small experiment with glibc"
 date: 2026-10-05 12:00:00 +0500
+description: "A GDB and GEF walkthrough of glibc malloc: chunk sizes, fastbin reuse, and allocations from the top chunk with tcache disabled."
 categories: [cpp, memory]
 ---
 
@@ -404,7 +405,7 @@ small.
 
 ## What this demonstrates
 
-**Not every `malloc` or `free` call needs to interact with the kernel.**
+**Not every `malloc` or `free` call requires a system call to obtain or release backing memory.**
 The allocator can reuse memory it already manages instead of requesting
 more space through `brk` or a new `mmap` mapping. Likewise, `free` can
 keep a chunk available for reuse rather than immediately returning its

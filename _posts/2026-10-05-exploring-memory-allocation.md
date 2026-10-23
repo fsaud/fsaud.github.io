@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Does every malloc call ask Linux for memory? A small experiment with glibc"
-date: 2026-10-05 12:00:00 +0500
+date: 2026-10-23 12:00:00 +0500
 description: "A GDB and GEF walkthrough of glibc malloc: chunk sizes, fastbin reuse, and allocations from the top chunk with tcache disabled."
 categories: [cpp, memory]
 ---
@@ -200,25 +200,6 @@ allocate the per-thread `tcache_perthread_struct`, which appears as a
 not mean caching is enabled: `tcache_count=0` prevents freed chunks from
 being stored in tcache, while its bookkeeping structure can still exist.
 
-### Load matching glibc debug symbols
-
-GEF can inspect allocator state more reliably with matching glibc debug
-symbols. On the AlmaLinux system used here, install them with:
-
-```bash
-sudo dnf debuginfo-install glibc-2.34-275.el9_8.x86_64
-```
-
-If the subcommand is unavailable, install `dnf-plugins-core` first. Use
-the version matching your installed glibc, then start a fresh GDB session.
-Without those symbols, GEF may fall back to the start of the `[heap]`
-mapping. In this environment, startup storage for the tunables string
-can precede the malloc chunks and confuse that fallback heap walk.
-
-At the breakpoint on `main`, the highlighted allocation line has not
-executed yet. Use `next` (or `n`) to execute it before inspecting its
-result. The same rule applies when stepping over `free`.
-
 ## Inspect the main arena
 
 Use `heap arenas` in GEF to display the main arena, the allocator
@@ -231,9 +212,7 @@ inspected separately with `heap bins`.
 At the early checkpoint shown here, the displayed top pointer is
 `top=0x0`, and the memory counters are `mem=0` and `mempeak=0`.
 The main arena structure exists, but these fields have not yet been
-initialized by allocation activity. This is the state captured here, not
-a guarantee for every program: runtime libraries can allocate before
-`main`, and other startup code may already have reserved heap space.
+initialized by allocation activity.
 
 ## Establish the initial state
 
@@ -260,11 +239,6 @@ Although the application requested 15 bytes, its allocation occupies a
 `0x20`-byte chunk (32 bytes), accounting for allocator overhead and
 alignment. GEF shows the returned pointer as `0x4052d0` in this run;
 this points to the application's usable memory, after the chunk header.
-The address can differ between runs.
-
-The tcache bookkeeping chunk can still appear even though caching is
-disabled. The top chunk holds the remaining space available for future
-allocations.
 
 ## All allocations
 
@@ -437,13 +411,3 @@ Next, we will repeat the experiment with tcache enabled. We will inspect
 how freed chunks enter the per-thread cache and how later allocations
 reuse them, then compare this behavior with the fastbin paths observed
 here.
-
-## Source references
-
-For the implementation details behind this walkthrough, see glibc
-2.34's [malloc.c](https://github.com/bminor/glibc/blob/glibc-2.34/malloc/malloc.c)
-and [arena.c](https://github.com/bminor/glibc/blob/glibc-2.34/malloc/arena.c).
-These are upstream references; the distribution source RPM listed above
-includes the patches matching the installed package. For the C++ entry
-points, see libstdc++'s [operator new](https://github.com/gcc-mirror/gcc/blob/master/libstdc%2B%2B-v3/libsupc%2B%2B/new_op.cc)
-and [operator delete](https://github.com/gcc-mirror/gcc/blob/master/libstdc%2B%2B-v3/libsupc%2B%2B/del_op.cc).
